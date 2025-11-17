@@ -62,15 +62,17 @@ def load_training_data(dataset_path=DATASET_DIR):
                 continue
 
             img_path = os.path.join(person_folder, img_file)
+
+            # Load saved cropped face directly
             img = Image.open(img_path).convert("L")
             img_np = np.array(img, "uint8")
 
-            # Use DNN to detect faces in training images
-            detected = detect_faces_dnn(cv2.cvtColor(img_np, cv2.COLOR_GRAY2BGR))
+            # Skip empty/corrupted files
+            if img_np is None or img_np.size == 0:
+                continue
 
-            for (x, y, w, h) in detected:
-                face_samples.append(img_np[y:y+h, x:x+w])
-                ids.append(current_id)
+            face_samples.append(img_np)
+            ids.append(current_id)
 
         current_id += 1
 
