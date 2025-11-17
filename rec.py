@@ -101,16 +101,18 @@ def recognize():
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         for (x, y, w, h) in detected_faces:
-            # Ensure region is valid before predicting
             if x < 0 or y < 0 or x+w > gray.shape[1] or y+h > gray.shape[0]:
                 continue
 
-            roi_gray = gray[y:y+h, x:x+w]
-
-            # Skip empty or corrupted regions
+            roi_gray = gray[y:y+h, x:x+w]                  # Crop face
             if roi_gray.size == 0:
                 continue
 
+            # ---- NEW: preprocessing ----
+            roi_gray = cv2.resize(roi_gray, (200, 200))
+            roi_gray = cv2.equalizeHist(roi_gray)
+
+            # Predict
             id_, confidence = recognizer.predict(roi_gray)
 
             if confidence < 70:
