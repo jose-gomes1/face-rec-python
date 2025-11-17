@@ -81,7 +81,8 @@ def load_training_data(dataset_path=DATASET_DIR):
 
 def recognize():
     print("[INFO] Training face recognizer from dataset...")
-    recognizer = cv2.face.LBPHFaceRecognizer_create()
+    recognizer = cv2.face.LBPHFaceRecognizer_create(
+    radius=2, neighbors=8, grid_x=8, grid_y=8)
 
     faces, ids, names = load_training_data()
     recognizer.train(faces, np.array(ids))
@@ -104,23 +105,22 @@ def recognize():
             if x < 0 or y < 0 or x+w > gray.shape[1] or y+h > gray.shape[0]:
                 continue
 
-            roi_gray = gray[y:y+h, x:x+w]                  # Crop face
+            roi_gray = gray[y:y+h, x:x+w]
             if roi_gray.size == 0:
                 continue
 
-            # ---- NEW: preprocessing ----
             roi_gray = cv2.resize(roi_gray, (200, 200))
             roi_gray = cv2.equalizeHist(roi_gray)
 
-            # Predict
             id_, confidence = recognizer.predict(roi_gray)
 
-            if confidence < 70:
+            # allow for side/tilted faces
+            if confidence < 100:   # increase threshold for better multi-face recognition
                 name = names.get(id_, "Unknown")
-                color = (0, 255, 0)   # green
+                color = (0, 255, 0)
             else:
                 name = "Unknown"
-                color = (0, 0, 255)   # red
+                color = (0, 0, 255)
 
             cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
             cv2.putText(frame, f"{name} ({round(confidence,1)})",
