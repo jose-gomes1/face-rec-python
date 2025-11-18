@@ -1,140 +1,133 @@
 import cv2
-import os
+import mediapipe as mp
 import numpy as np
-from PIL import Image
+import pickle
+from collections import deque
 
-DATASET_DIR = "dataset"
+DB_FILE = "face_mesh_model.pkl"
+THRESHOLD = 0.65       # cosine similarity threshold
+ROLLING_FRAMES = 5      # number of frames to average
+TOP_K = 3               # top matches to display
 
-# Load DNN face detector once
-prototxt = "deploy.prototxt.txt"
-model = "res10_300x300_ssd_iter_140000.caffemodel"
-face_net = cv2.dnn.readNetFromCaffe(prototxt, model)
+mp_face_mesh = mp.solutions.face_mesh
+mp_face_detection = mp.solutions.face_detection
 
+# ----------------------
+# Normalize full 468-point embedding
+# ----------------------
+def get_embedding(landmarks):
+    pts = np.array([[lm.x, lm.y, lm.z] for lm in landmarks])
+    center = np.mean(pts[:, :2], axis=0)
+    pts[:, :2] = (pts[:, :2] - center) / (np.linalg.norm(pts[:, :2] - center) + 1e-6)
+    return pts.flatten()
 
-def detect_faces_dnn(image):
-    h, w = image.shape[:2]
-    blob = cv2.dnn.blobFromImage(image, 1.0, (300, 300),
-                                 (104.0, 177.0, 123.0))
-    face_net.setInput(blob)
-    detections = face_net.forward()
+# ----------------------
+# Cosine similarity
+# ----------------------
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-6)
 
-    faces = []
-    for i in range(detections.shape[2]):
-        confidence = detections[0, 0, i, 2]
+# ----------------------
+# Recognize a single embedding with top-k
+# ----------------------
+def recognize_embedding(embedding, db):
+    sims = [(cosine_similarity(embedding, vec), label) for vec, label in zip(db["data"], db["labels"])]
+    sims.sort(reverse=True)  # highest similarity first
+    top_sims = sims[:TOP_K]
+    best_sim, best_label = top_sims[0]
+    if best_sim < THRESHOLD:
+        best_label = "Unknown"
+    return best_label, best_sim, top_sims
 
-        if confidence > 0.6:  # adjust as needed
-            box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-            (x1, y1, x2, y2) = box.astype("int")
+# ----------------------
+# Main
+# ----------------------
+def main():
+    print("[INFO] Loading database...")
+    with open(DB_FILE, "rb") as f:
+        db = pickle.load(f)
 
-            # ---- CLAMP VALUES ----
-            x1 = max(0, x1)
-            y1 = max(0, y1)
-            x2 = min(w - 1, x2)
-            y2 = min(h - 1, y2)
+    print("[INFO] Starting camera...")
+    cap = cv2.VideoCapture(0)
 
-            width = x2 - x1
-            height = y2 - y1
+    face_detection = mp_face_detection.FaceDetection(min_detection_confidence=0.6)
+    face_mesh = mp_face_mesh.FaceMesh(
+        max_num_faces=5,
+        refine_landmarks=True,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5
+    )
 
-            # ---- IGNORE INVALID BOXES ----
-            if width > 10 and height > 10:
-                faces.append((x1, y1, width, height))
-
-    return faces
-
-
-def load_training_data(dataset_path=DATASET_DIR):
-    face_samples = []
-    ids = []
-    names = {}
-    current_id = 0
-
-    for person_name in os.listdir(dataset_path):
-        person_folder = os.path.join(dataset_path, person_name)
-
-        if not os.path.isdir(person_folder):
-            continue
-
-        print(f"[INFO] Loading images for: {person_name}")
-        names[current_id] = person_name
-
-        for img_file in os.listdir(person_folder):
-            if not img_file.lower().endswith(".jpg"):
-                continue
-
-            img_path = os.path.join(person_folder, img_file)
-
-            # Load saved cropped face directly
-            img = Image.open(img_path).convert("L")
-            img_np = np.array(img, "uint8")
-
-            # Skip empty/corrupted files
-            if img_np is None or img_np.size == 0:
-                continue
-
-            face_samples.append(img_np)
-            ids.append(current_id)
-
-        current_id += 1
-
-    return face_samples, ids, names
-
-
-def recognize():
-    print("[INFO] Training face recognizer from dataset...")
-    recognizer = cv2.face.LBPHFaceRecognizer_create(
-    radius=2, neighbors=8, grid_x=8, grid_y=8)
-
-    faces, ids, names = load_training_data()
-    recognizer.train(faces, np.array(ids))
-
-    print("[INFO] Training complete. Starting camera...")
-
-    cam = cv2.VideoCapture(0)
+    # Rolling embeddings per detected face (dict keyed by bbox center)
+    face_memory = {}
 
     while True:
-        ret, frame = cam.read()
+        ret, frame = cap.read()
         if not ret:
             break
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, _ = frame.shape
 
-        # DNN detection works in BGR directly
-        detected_faces = detect_faces_dnn(frame)
+        current_faces = []
+        if (det_results := face_detection.process(frame_rgb)).detections:
+            for det in det_results.detections:
+                bbox_rel = det.location_data.relative_bounding_box
+                x1 = max(int(bbox_rel.xmin * w), 0)
+                y1 = max(int(bbox_rel.ymin * h), 0)
+                x2 = min(int((bbox_rel.xmin + bbox_rel.width) * w), w-1)
+                y2 = min(int((bbox_rel.ymin + bbox_rel.height) * h), h-1)
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                face_crop = frame_rgb[y1:y2, x1:x2]
+                mesh_results = face_mesh.process(face_crop)
 
-        for (x, y, w, h) in detected_faces:
-            if x < 0 or y < 0 or x+w > gray.shape[1] or y+h > gray.shape[0]:
-                continue
+                if mesh_results.multi_face_landmarks:
+                    for fl in mesh_results.multi_face_landmarks:
+                        embedding = get_embedding(fl.landmark)
+                        # use bbox center as key
+                        cx, cy = (x1 + x2)//2, (y1 + y2)//2
+                        key = (cx, cy)
 
-            roi_gray = gray[y:y+h, x:x+w]
-            if roi_gray.size == 0:
-                continue
+                        if key not in face_memory:
+                            face_memory[key] = deque(maxlen=ROLLING_FRAMES)
+                        face_memory[key].append(embedding)
 
-            roi_gray = cv2.resize(roi_gray, (200, 200))
-            roi_gray = cv2.equalizeHist(roi_gray)
+                        # ----------------------
+                        # Average embeddings over last frames
+                        avg_emb = np.mean(np.array(face_memory[key]), axis=0)
+                        name, score, top_matches = recognize_embedding(avg_emb, db)
 
-            id_, confidence = recognizer.predict(roi_gray)
+                        # Draw polygon mesh in light gray
+                        for lm in fl.landmark:
+                            px = int(lm.x * (x2 - x1)) + x1
+                            py = int(lm.y * (y2 - y1)) + y1
+                            cv2.circle(frame, (px, py), 1, (200, 200, 200), -1)
 
-            # allow for side/tilted faces
-            if confidence < 100:   # increase threshold for better multi-face recognition
-                name = names.get(id_, "Unknown")
-                color = (0, 255, 0)
-            else:
-                name = "Unknown"
-                color = (0, 0, 255)
+                        # Draw bounding box and label
+                        color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
 
-            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
-            cv2.putText(frame, f"{name} ({round(confidence,1)})",
-                        (x, y-10), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8, color, 2)
+                        # Label with top-k suggestions if unknown
+                        label_text = f"{name} ({score:.2f})"
+                        if name == "Unknown":
+                            suggestions = ", ".join([f"{l} ({s:.2f})" for s, l in top_matches])
+                            label_text += f" | Top: {suggestions}"
+                        cv2.putText(frame, label_text, (x1, y1 - 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
-        cv2.imshow("Real-Time Face Recognition", frame)
+                        current_faces.append(key)
 
+        # Clean memory for disappeared faces
+        keys_to_delete = [k for k in face_memory if k not in current_faces]
+        for k in keys_to_delete:
+            del face_memory[k]
+
+        cv2.imshow("FaceMesh Recognition", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
-    cam.release()
+    cap.release()
     cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
-    recognize()
+    main()
