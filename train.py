@@ -1,130 +1,107 @@
-# recognize.py
 import cv2
-import mediapipe as mp
-import numpy as np
+import os
 import pickle
-from collections import deque
+import numpy as np
 
-DB_FILE = "face_mesh_model.pkl"
-TOP_K = 3  # number of nearest neighbors to consider
-THRESHOLD = 0.6  # embedding similarity threshold
-SMOOTH_FRAMES = 5  # frames to persist identity
+# ----------------------------
+# Paths
+# ----------------------------
+DATA_DIR = "dataset"       # dataset/<person_name>/images
+DB_FILE = "face_db.pkl"
+CAFFE_PROTO = "deploy.prototxt.txt"
+CAFFE_MODEL = "res10_300x300_ssd_iter_140000.caffemodel"
+FACENET_T7 = "nn4.small2.v1.t7"  # Torch model
 
-mp_face_mesh = mp.solutions.face_mesh
-mp_face_detection = mp.solutions.face_detection
+os.makedirs(DATA_DIR, exist_ok=True)
 
-# -------------------------
-# Extract embedding from 468 landmarks
-# -------------------------
-def get_embedding(landmarks):
-    pts = np.array([[lm.x, lm.y, lm.z] for lm in landmarks])
-    center = np.mean(pts[:, :2], axis=0)
-    pts[:, :2] = (pts[:, :2] - center) / (np.linalg.norm(pts[:, :2] - center) + 1e-6)
-    return pts.flatten()
+# ----------------------------
+# Load models
+# ----------------------------
+face_net = cv2.dnn.readNetFromCaffe(CAFFE_PROTO, CAFFE_MODEL)
+embedder = cv2.dnn.readNetFromTorch(FACENET_T7)
 
-# -------------------------
-# Predict using top-k nearest neighbors + temporal smoothing
-# -------------------------
-class Recognizer:
-    def __init__(self, db, top_k=TOP_K, threshold=THRESHOLD, smooth_frames=SMOOTH_FRAMES):
-        self.db = db
-        self.top_k = top_k
-        self.threshold = threshold
-        self.smooth_frames = smooth_frames
-        self.last_ids = deque(maxlen=smooth_frames)
-
-    def predict(self, embedding):
-        if len(self.db["data"]) == 0:
-            return "Unknown", 999
-
-        # Compute distances to all embeddings
-        distances = np.linalg.norm(np.array(self.db["data"]) - embedding, axis=1)
-        nearest_idx = distances.argsort()[:self.top_k]
-        nearest_labels = [self.db["labels"][i] for i in nearest_idx]
-        nearest_dists = distances[nearest_idx]
-
-        # Majority vote among top-k
-        label_counts = {}
-        for lbl, dist in zip(nearest_labels, nearest_dists):
-            if dist < self.threshold:
-                label_counts[lbl] = label_counts.get(lbl, 0) + 1
-
-        if not label_counts:
-            return "Unknown", nearest_dists[0]
-
-        best_label = max(label_counts.items(), key=lambda x: x[1])[0]
-        best_dist = min([d for lbl, d in zip(nearest_labels, nearest_dists) if lbl == best_label])
-        
-        # Temporal smoothing
-        self.last_ids.append(best_label)
-        if len(self.last_ids) == self.smooth_frames:
-            # if majority agrees in last few frames
-            votes = {lbl: self.last_ids.count(lbl) for lbl in set(self.last_ids)}
-            if max(votes.values()) / self.smooth_frames > 0.6:  # 60% agreement
-                return best_label, best_dist
-            else:
-                return "Unknown", best_dist
-        else:
-            return best_label, best_dist
-
-# -------------------------
-# Main loop
-# -------------------------
-def main():
-    print("[INFO] Loading database...")
+# ----------------------------
+# Load or create DB
+# ----------------------------
+if os.path.exists(DB_FILE):
     with open(DB_FILE, "rb") as f:
         db = pickle.load(f)
+else:
+    db = {"embeddings": [], "labels": []}
 
-    recognizer = Recognizer(db)
+# ----------------------------
+# Get person name
+# ----------------------------
+person_name = input("Enter person name: ").strip()
+person_dir = os.path.join(DATA_DIR, person_name)
+os.makedirs(person_dir, exist_ok=True)
+count = len(os.listdir(person_dir))
 
-    cap = cv2.VideoCapture(0)
+print(f"[INFO] Capturing faces for {person_name}. Press 'q' to quit.")
 
-    with mp_face_mesh.FaceMesh(
-        max_num_faces=5,
-        refine_landmarks=True,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
-    ) as face_mesh:
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+cap = cv2.VideoCapture(0)
 
-            h, w, _ = frame.shape
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = face_mesh.process(frame_rgb)
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        continue
 
-            if results.multi_face_landmarks:
-                for fl in results.multi_face_landmarks:
-                    # Full 468-point embedding
-                    embedding = get_embedding(fl.landmark)
+    h, w = frame.shape[:2]
 
-                    # Predict
-                    name, dist = recognizer.predict(embedding)
+    # Detect faces
+    blob = cv2.dnn.blobFromImage(frame, 1.0, (300,300), (104.0,177.0,123.0))
+    face_net.setInput(blob)
+    detections = face_net.forward()
 
-                    # Compute bounding box
-                    xs = [int(lm.x * w) for lm in fl.landmark]
-                    ys = [int(lm.y * h) for lm in fl.landmark]
-                    x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
+    for i in range(detections.shape[2]):
+        conf = detections[0,0,i,2]
+        if conf < 0.5:
+            continue
 
-                    color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
+        box = detections[0,0,i,3:7] * np.array([w,h,w,h])
+        x1, y1, x2, y2 = box.astype(int)
+        x1, y1 = max(0,x1), max(0,y1)
+        x2, y2 = min(w,x2), min(h,y2)
 
-                    # Draw bounding box
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                    cv2.putText(frame, f"{name} ({dist:.2f})", (x1, y1 - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+        face_img = frame[y1:y2, x1:x2]
+        cv2.rectangle(frame,(x1,y1),(x2,y2),(0,255,0),2)
 
-                    # Draw mesh (light gray)
-                    for lm in fl.landmark:
-                        px, py = int(lm.x * w), int(lm.y * h)
-                        cv2.circle(frame, (px, py), 1, (200, 200, 200), -1)
+        # Resize face for Facenet
+        face_resized = cv2.resize(face_img, (96,96))
+        face_blob = cv2.dnn.blobFromImage(face_resized, 1.0/255, (96,96), (0,0,0), swapRB=True, crop=False)
+        embedder.setInput(face_blob)
+        vec = embedder.forward().flatten()
 
-            cv2.imshow("Face Recognition", frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
+        # Save embedding
+        db["embeddings"].append(vec)
+        db["labels"].append(person_name)
 
-    cap.release()
-    cv2.destroyAllWindows()
+        # After saving a captured face and embedding
+        count += 1
+        img_path = os.path.join(person_dir, f"{count}.jpg")
+        cv2.imwrite(img_path, face_img)
 
-if __name__ == "__main__":
-    main()
+        # Display on frame
+        cv2.putText(frame, f"Images captured: {count}", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
+        cv2.putText(frame, "Press 'q' to quit", (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 2)
+        
+        cv2.imshow("Capture", frame)
+
+        # Also print to console
+        print(f"[INFO] Saved {img_path} - total images: {count}")
+
+
+    cv2.imshow("Capture", frame)
+    if cv2.waitKey(1) & 0xFF == ord("q"):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+
+# Save DB
+with open(DB_FILE, "wb") as f:
+    pickle.dump(db, f)
+
+print(f"[INFO] Training complete. Total images for {person_name}: {count}")

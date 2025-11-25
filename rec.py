@@ -1,133 +1,128 @@
 import cv2
-import mediapipe as mp
 import numpy as np
 import pickle
-from collections import deque
+from collections import deque, Counter
+from scipy.spatial import distance
 
-DB_FILE = "face_mesh_model.pkl"
-THRESHOLD = 0.65       # cosine similarity threshold
-ROLLING_FRAMES = 5      # number of frames to average
-TOP_K = 3               # top matches to display
+# ----------------------------
+# Paths
+# ----------------------------
+CAFFE_PROTO = "deploy.prototxt.txt"
+CAFFE_MODEL = "res10_300x300_ssd_iter_140000.caffemodel"
+FACENET_T7 = "nn4.small2.v1.t7"
+DB_FILE = "face_db.pkl"
 
-mp_face_mesh = mp.solutions.face_mesh
-mp_face_detection = mp.solutions.face_detection
+# Config
+SMOOTH_FRAMES = 10
+DIST_THRESHOLD = 0.6       # Distance threshold for unknown
+TRACK_DIST_THRESHOLD = 50  # pixels max movement to keep same ID
 
-# ----------------------
-# Normalize full 468-point embedding
-# ----------------------
-def get_embedding(landmarks):
-    pts = np.array([[lm.x, lm.y, lm.z] for lm in landmarks])
-    center = np.mean(pts[:, :2], axis=0)
-    pts[:, :2] = (pts[:, :2] - center) / (np.linalg.norm(pts[:, :2] - center) + 1e-6)
-    return pts.flatten()
+# ----------------------------
+# Load models and database
+# ----------------------------
+face_net = cv2.dnn.readNetFromCaffe(CAFFE_PROTO, CAFFE_MODEL)
+embedder = cv2.dnn.readNetFromTorch(FACENET_T7)
 
-# ----------------------
-# Cosine similarity
-# ----------------------
-def cosine_similarity(a, b):
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-6)
+with open(DB_FILE, "rb") as f:
+    db = pickle.load(f)
 
-# ----------------------
-# Recognize a single embedding with top-k
-# ----------------------
-def recognize_embedding(embedding, db):
-    sims = [(cosine_similarity(embedding, vec), label) for vec, label in zip(db["data"], db["labels"])]
-    sims.sort(reverse=True)  # highest similarity first
-    top_sims = sims[:TOP_K]
-    best_sim, best_label = top_sims[0]
-    if best_sim < THRESHOLD:
-        best_label = "Unknown"
-    return best_label, best_sim, top_sims
+db_embeddings = np.array(db["embeddings"])
+db_labels = np.array(db["labels"])
 
-# ----------------------
-# Main
-# ----------------------
-def main():
-    print("[INFO] Loading database...")
-    with open(DB_FILE, "rb") as f:
-        db = pickle.load(f)
+# ----------------------------
+# Tracking buffers
+# ----------------------------
+next_face_id = 0
+faces = {}  # face_id -> {'bbox':(x1,y1,x2,y2), 'embedding':vec, 'names':deque, 'center':(cx,cy)}
 
-    print("[INFO] Starting camera...")
-    cap = cv2.VideoCapture(0)
+# ----------------------------
+# Video capture
+# ----------------------------
+cap = cv2.VideoCapture(0)
+print("[INFO] Starting recognition. Press 'q' to quit.")
 
-    face_detection = mp_face_detection.FaceDetection(min_detection_confidence=0.6)
-    face_mesh = mp_face_mesh.FaceMesh(
-        max_num_faces=5,
-        refine_landmarks=True,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
-    )
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        continue
 
-    # Rolling embeddings per detected face (dict keyed by bbox center)
-    face_memory = {}
+    h, w = frame.shape[:2]
+    blob = cv2.dnn.blobFromImage(frame, 1.0, (300,300), (104.0,177.0,123.0))
+    face_net.setInput(blob)
+    detections = face_net.forward()
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w, _ = frame.shape
+    current_faces = []
 
-        current_faces = []
-        if (det_results := face_detection.process(frame_rgb)).detections:
-            for det in det_results.detections:
-                bbox_rel = det.location_data.relative_bounding_box
-                x1 = max(int(bbox_rel.xmin * w), 0)
-                y1 = max(int(bbox_rel.ymin * h), 0)
-                x2 = min(int((bbox_rel.xmin + bbox_rel.width) * w), w-1)
-                y2 = min(int((bbox_rel.ymin + bbox_rel.height) * h), h-1)
+    for i in range(detections.shape[2]):
+        conf = detections[0,0,i,2]
+        if conf < 0.5:
+            continue
 
-                face_crop = frame_rgb[y1:y2, x1:x2]
-                mesh_results = face_mesh.process(face_crop)
+        box = detections[0,0,i,3:7] * np.array([w,h,w,h])
+        x1, y1, x2, y2 = box.astype(int)
+        x1, y1 = max(0,x1), max(0,y1)
+        x2, y2 = min(w,x2), min(h,y2)
 
-                if mesh_results.multi_face_landmarks:
-                    for fl in mesh_results.multi_face_landmarks:
-                        embedding = get_embedding(fl.landmark)
-                        # use bbox center as key
-                        cx, cy = (x1 + x2)//2, (y1 + y2)//2
-                        key = (cx, cy)
+        face_crop = frame[y1:y2, x1:x2]
+        face_resized = cv2.resize(face_crop, (96,96))
+        face_blob = cv2.dnn.blobFromImage(face_resized, 1.0/255, (96,96), (0,0,0), swapRB=True, crop=False)
+        embedder.setInput(face_blob)
+        vec = embedder.forward().flatten()
 
-                        if key not in face_memory:
-                            face_memory[key] = deque(maxlen=ROLLING_FRAMES)
-                        face_memory[key].append(embedding)
+        cx, cy = (x1+x2)//2, (y1+y2)//2
+        current_faces.append({'bbox':(x1,y1,x2,y2),'embedding':vec,'center':(cx,cy)})
 
-                        # ----------------------
-                        # Average embeddings over last frames
-                        avg_emb = np.mean(np.array(face_memory[key]), axis=0)
-                        name, score, top_matches = recognize_embedding(avg_emb, db)
+    # ----------------------------
+    # Assign IDs using centroid tracking
+    # ----------------------------
+    assigned_ids = []
+    for cf in current_faces:
+        min_dist = float('inf')
+        assigned_id = None
+        for fid, data in faces.items():
+            prev_cx, prev_cy = data['center']
+            dist_c = distance.euclidean(cf['center'], (prev_cx, prev_cy))
+            if dist_c < TRACK_DIST_THRESHOLD:
+                assigned_id = fid
+                break
 
-                        # Draw polygon mesh in light gray
-                        for lm in fl.landmark:
-                            px = int(lm.x * (x2 - x1)) + x1
-                            py = int(lm.y * (y2 - y1)) + y1
-                            cv2.circle(frame, (px, py), 1, (200, 200, 200), -1)
+        if assigned_id is None:
+            assigned_id = next_face_id
+            next_face_id += 1
+            faces[assigned_id] = {'bbox':cf['bbox'],
+                                  'embedding':cf['embedding'],
+                                  'names':deque(maxlen=SMOOTH_FRAMES),
+                                  'center':cf['center']}
+        else:
+            faces[assigned_id]['bbox'] = cf['bbox']
+            faces[assigned_id]['embedding'] = cf['embedding']
+            faces[assigned_id]['center'] = cf['center']
 
-                        # Draw bounding box and label
-                        color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        assigned_ids.append(assigned_id)
 
-                        # Label with top-k suggestions if unknown
-                        label_text = f"{name} ({score:.2f})"
-                        if name == "Unknown":
-                            suggestions = ", ".join([f"{l} ({s:.2f})" for s, l in top_matches])
-                            label_text += f" | Top: {suggestions}"
-                        cv2.putText(frame, label_text, (x1, y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+    # ----------------------------
+    # Recognition + smoothing
+    # ----------------------------
+    for fid in assigned_ids:
+        vec = faces[fid]['embedding']
+        # Compare to DB
+        dists = np.linalg.norm(db_embeddings - vec, axis=1)
+        min_idx = np.argmin(dists)
+        min_dist = dists[min_idx]
+        name = db_labels[min_idx] if min_dist < DIST_THRESHOLD else "Unknown"
 
-                        current_faces.append(key)
+        faces[fid]['names'].append(name)
+        smoothed_name = Counter(faces[fid]['names']).most_common(1)[0][0]
 
-        # Clean memory for disappeared faces
-        keys_to_delete = [k for k in face_memory if k not in current_faces]
-        for k in keys_to_delete:
-            del face_memory[k]
+        x1,y1,x2,y2 = faces[fid]['bbox']
+        color = (0,255,0) if smoothed_name!="Unknown" else (0,0,255)
+        cv2.rectangle(frame,(x1,y1),(x2,y2),color,2)
+        cv2.putText(frame,f"{smoothed_name} ({min_dist:.2f})",(x1,y1-10),
+                    cv2.FONT_HERSHEY_SIMPLEX,0.7,color,2)
 
-        cv2.imshow("FaceMesh Recognition", frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+    cv2.imshow("Face Recognition with Tracking", frame)
+    if cv2.waitKey(1) & 0xFF == ord("q"):
+        break
 
-    cap.release()
-    cv2.destroyAllWindows()
-
-
-if __name__ == "__main__":
-    main()
+cap.release()
+cv2.destroyAllWindows()
