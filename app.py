@@ -223,9 +223,7 @@ while running:
     # ---------------- DRAW SCREENS ----------------
     if current_screen=="menu":
         title = font.render("Face Recognition App",True,TEXT_COLOR)
-        db_txt = font.render(f"DB: {DB_FILE}",True,TEXT_COLOR)
         screen.blit(title,(WIDTH//2 - title.get_width()//2,50))
-        screen.blit(db_txt,(WIDTH//2 - db_txt.get_width()//2,100))
         for b in menu_buttons:
             b.draw(screen)
 
