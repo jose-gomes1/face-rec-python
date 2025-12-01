@@ -5,9 +5,12 @@ import os
 # -----------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-CAFFE_PROTO = os.path.join(BASE_DIR, "dataset/deploy.prototxt.txt")
-CAFFE_MODEL = os.path.join(BASE_DIR, "dataset/res10_300x300_ssd_iter_140000.caffemodel")
-FACENET_T7 = os.path.join(BASE_DIR, "dataset/nn4.small2.v1.t7")
+CAFFE_PROTO = os.path.join(BASE_DIR, "dataset/deploy.prototxt.txt") # defines the neural network architecture (layers, layer types, connections)
+CAFFE_MODEL = os.path.join(BASE_DIR, "dataset/res10_300x300_ssd_iter_140000.caffemodel") # contains the network's trained weights
+FACENET_T7 = os.path.join(BASE_DIR, "dataset/nn4.small2.v1.t7") # extracts vectors from facial embeddings
+
+# SSD (Single Shot Detector) is like a radar that finds faces
+# FaceNet is like a digitized fingerprint, unique to each face
 
 DB_FILE = os.path.join(BASE_DIR, "dataset/face_db.pkl")
 DATA_DIR = os.path.join(BASE_DIR, "dataset")
