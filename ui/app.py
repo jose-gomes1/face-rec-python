@@ -1,9 +1,7 @@
-# ui/app.py
-
 import pygame
 import cv2
 import numpy as np
-import asyncio
+import time
 
 import config
 from ui.button import Button
@@ -37,12 +35,6 @@ class App:
 
     def to_recognize(self):
         self.start_camera(train=False)
-    
-    # Inside App class
-    def update_frame(self, frame, text):
-        self.camera_frame = frame
-        self.result_text = text
-
 
     def start_camera(self, train=False, name=None):
         self.state = "camera"
@@ -73,7 +65,7 @@ class App:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.stop_camera()
-                    asyncio.sleep(0.1)
+                    time.sleep(0.1)
                     pygame.quit()
                     return
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -121,4 +113,4 @@ class App:
             self.screen.blit(info_txt,(10,10))
             if self.result_text:
                 text_surf = self.font.render(self.result_text, True, (255,255,0))
-                self.screen.blit(text_surf, (10, 10))
+                self.screen.blit(text_surf, (10, 40))

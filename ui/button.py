@@ -1,9 +1,8 @@
-# ui/button.py
-
 import pygame
 import config
 
 class Button:
+    # a callback is like leaving a "future instruction" to say "when this happens, do this"
     def __init__(self, rect, text, callback):
         self.rect = pygame.Rect(rect)
         self.text = text

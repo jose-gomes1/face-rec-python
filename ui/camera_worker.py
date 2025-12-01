@@ -1,5 +1,3 @@
-# ui/camera_worker.py
-
 import threading
 import cv2
 import numpy as np
@@ -7,7 +5,7 @@ import config
 
 class CameraWorker(threading.Thread):
     def __init__(self, detector, embedder, db, recognizer, trainer, callback, train_name=None):
-        super().__init__(daemon=True)
+        super().__init__(daemon=True) # ensures that the thread terminates automatically when the main program closes
         self.detector = detector
         self.embedder = embedder
         self.db = db
@@ -19,22 +17,24 @@ class CameraWorker(threading.Thread):
         self.result_text = ""
 
     def run(self):
-        cap = cv2.VideoCapture(0)
+        cap = cv2.VideoCapture(0) # opens the camera
         while not self.stop_flag:
-            ret, frame = cap.read()
+            ret, frame = cap.read() # reads every camera frame
             if not ret: continue
 
-            frame = cv2.flip(frame, 1)
-            faces = self.detector.detect(frame)
+            frame = cv2.flip(frame, 1) # flips the frame (common in webcams)
+            faces = self.detector.detect(frame) # decects the face in the frame
 
-            for (x1,y1,x2,y2) in faces:
-                face_img = frame[y1:y2, x1:x2]
-                emb = self.embedder.get_embedding(face_img)
+            for (x1,y1,x2,y2) in faces: # for every detected face
+                face_img = frame[y1:y2, x1:x2] # cuts the face region
+                emb = self.embedder.get_embedding(face_img) # generates the face embedding
 
+                # if train_name is set, saves the face in the database (training)
                 if self.train_name:
                     self.trainer.save_training_image(self.train_name, face_img, emb)
                     name = self.train_name
                     self.result_text = f"Treinando {name}"
+                # else recognizes the face and compares embbedings
                 else:
                     name, dist = self.recognizer.recognize(emb)
                     if name != "Unknown":
@@ -45,7 +45,7 @@ class CameraWorker(threading.Thread):
                 cv2.rectangle(frame, (x1,y1), (x2,y2), (0,255,0) if name!="Unknown" else (0,0,255), 2)
                 cv2.putText(frame, name, (x1,y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0) if name!="Unknown" else (0,0,255), 2)
 
-            # Pass both frame and result_text to the callback
+            # pass both frame and result_text to the callback
             self.callback(frame, self.result_text)
 
         cap.release()

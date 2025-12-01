@@ -1,5 +1,3 @@
-# main.py
-
 from face.detector import FaceDetector
 from face.embedder import FaceEmbedder
 from face.database import FaceDatabase
