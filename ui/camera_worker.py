@@ -1,7 +1,6 @@
 import threading
 import cv2
 import numpy as np
-import config
 
 class CameraWorker(threading.Thread):
     def __init__(self, detector, embedder, db, recognizer, trainer, callback, train_name=None):

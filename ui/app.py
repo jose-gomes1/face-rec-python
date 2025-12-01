@@ -34,9 +34,9 @@ class App:
         self.state = "type_name"
 
     def to_recognize(self):
-        self.start_camera(train=False)
+        self.start_camera()
 
-    def start_camera(self, train=False, name=None):
+    def start_camera(self, name=None):
         self.state = "camera"
         self.worker = CameraWorker(
             self.detector,
@@ -75,7 +75,7 @@ class App:
                 if self.state == "type_name":
                     if event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_RETURN and self.name_input:
-                            self.start_camera(train=True, name=self.name_input)
+                            self.start_camera(name=self.name_input)
                         elif event.key == pygame.K_BACKSPACE:
                             self.name_input = self.name_input[:-1]
                         else:
