@@ -20,7 +20,7 @@ class FaceDetector:
         # processes detection
         faces = []
         for i in range(detections.shape[2]):
-            conf = detections[0,0,i,2]
+            conf = detections[0,0,i,2] # batch_id, detector_id, which detection, confidence -> [ 0, 1, confidence, x1, y1, x2, y2 ]
             if conf < 0.5:
                 continue
 
@@ -29,5 +29,5 @@ class FaceDetector:
             x1,y1,x2,y2 = box.astype(int)
             # corrects the coordinates and stores
             faces.append((max(0,x1), max(0,y1), min(w,x2), min(h,y2)))
-            # stores evert face as a tuple (x1, y1, x2, y2)
+            # stores every face as a tuple (x1, y1, x2, y2)
         return faces
