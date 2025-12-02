@@ -2,6 +2,7 @@
 - opencv-python
 -  os
 -  pickle
+-  collections
 -  numpy
 -  scipy
 -  pygame
