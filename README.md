@@ -4,7 +4,7 @@ A simple Python project for detecting and recognizing faces using OpenCV and Num
 
 ---
 
-## 📂 Repository Structure
+## Repository Structure
 
 ```
 /dataset/       — Folder for storing face images for training/recognition  
@@ -18,7 +18,7 @@ README.md       — This file
 
 ---
 
-## ⚙️ Requirements
+## Requirements
 
 * Python 3.x
 * `opencv-python`
@@ -36,7 +36,7 @@ pip install pygame
 
 ---
 
-## 🚀 Usage
+## Usage
 
 1. Prepare a `dataset/` folder containing subfolders for each person. Each subfolder should include one or more images of that person.
 2. Adjust parameters in `config.py` (e.g., paths, thresholds).
@@ -50,7 +50,7 @@ python3 main.py
 
 ---
 
-## 🎯 Features
+## Features
 
 * Detects faces in images using OpenCV.
 * Encodes faces for recognition.
@@ -59,7 +59,7 @@ python3 main.py
 
 ---
 
-## ⚠️ Limitations
+## Limitations
 
 * Dataset must be organized as one subfolder per identity.
 * Recognition depends on image quality, lighting, and angle.
@@ -68,7 +68,7 @@ python3 main.py
 
 ---
 
-## 🧪 Example Dataset Structure
+## Example Dataset Structure
 
 ```
 dataset/
@@ -81,13 +81,13 @@ dataset/
 
 ---
 
-## 🔄 Comparison
+## Comparison
 
 This project provides a lightweight, customizable approach for learning purposes. For production-ready solutions, consider libraries like [face_recognition](https://github.com/ageitgey/face_recognition).
 
 ---
 
-## 📄 License & Credits
+## License & Credits
 
 This project is open-source and free to use. Credit to the open-source community for inspiration and foundational work in face detection and recognition.
 
