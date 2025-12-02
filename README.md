@@ -26,6 +26,14 @@ README.md       — This file
 * `scipy`
 * `pygame`
 
+## Library instalation
+
+```
+pip install opencv-python
+pip install scipy
+pip install pygame 
+```
+
 ---
 
 ## 🚀 Usage
@@ -82,15 +90,5 @@ This project provides a lightweight, customizable approach for learning purposes
 ## 📄 License & Credits
 
 This project is open-source and free to use. Credit to the open-source community for inspiration and foundational work in face detection and recognition.
-
----
-
-# Library instalation
-
-```
-pip install opencv-python
-pip install scipy
-pip install pygame 
-```
 
 ---
