@@ -83,7 +83,7 @@ dataset/
 
 ## Comparison
 
-This project provides a lightweight, customizable approach for learning purposes. For production-ready solutions, consider libraries like [face_recognition](https://github.com/ageitgey/face_recognition).
+This project provides a lightweight, customizable approach for learning purposes.
 
 ---
 
