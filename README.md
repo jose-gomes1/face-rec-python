@@ -20,7 +20,7 @@ README.md       — This file
 
 ## Requirements
 
-* Python 3.x
+* Python 3
 * `opencv-python`
 * `numpy`
 * `scipy`
