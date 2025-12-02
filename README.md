@@ -9,6 +9,6 @@
 -  time
 
 # Installation:
-pip install opencv-python
-pip install scipy
-pip install pygame
+pip install opencv-python <br />
+pip install scipy <br />
+pip install pygame <br />
