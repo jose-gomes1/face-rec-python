@@ -29,9 +29,7 @@ README.md       — This file
 ## Library instalation
 
 ```
-pip install opencv-python
-pip install scipy
-pip install pygame 
+pip install -r requirements.txt
 ```
 
 ---
